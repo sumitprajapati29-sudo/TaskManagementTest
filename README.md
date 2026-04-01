@@ -1,6 +1,6 @@
 # ✅ TaskFlow – Task Management Application
 
-A full-stack task management web application built with **React.js**, **Node.js/Express**, and **SQLite**.
+A full-stack task management web application built with **React.js**, **Node.js/Express**, and **SQLite**. CI/CD powered by GitHub Actions.
 
 ---
 
