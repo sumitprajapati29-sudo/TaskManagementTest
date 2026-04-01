@@ -16,7 +16,7 @@ jobs:
     runs-on: self-hosted
     defaults:
       run:
-        shell: bash
+        shell: pwsh
         working-directory: ./backend
     steps:
       - name: Checkout code
@@ -34,10 +34,18 @@ jobs:
 
       - name: Verify server starts
         run: |
-          timeout 10 node server.js &
-          sleep 5
-          curl -f http://localhost:5000/api/health || exit 1
-          kill %1 || true
+          $proc = Start-Process -FilePath "node" -ArgumentList "server.js" -PassThru -NoNewWindow
+          Start-Sleep -Seconds 5
+          try {
+            $response = Invoke-WebRequest -Uri http://localhost:5000/api/health -UseBasicParsing
+            if ($response.StatusCode -eq 200) {
+              Write-Host "Backend health check passed!"
+            } else {
+              throw "Health check returned $($response.StatusCode)"
+            }
+          } finally {
+            Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
+          }
 
   # ── Frontend: Lint, Build & Test ────────────────────────────────────────────
   frontend:
@@ -45,7 +53,7 @@ jobs:
     runs-on: self-hosted
     defaults:
       run:
-        shell: bash
+        shell: pwsh
         working-directory: ./frontend
     steps:
       - name: Checkout code
@@ -65,7 +73,12 @@ jobs:
         run: npm run build
 
       - name: Verify build output exists
-        run: test -d dist && echo "Build successful"
+        run: |
+          if (Test-Path -Path "dist" -PathType Container) {
+            Write-Host "Build successful"
+          } else {
+            throw "dist directory not found"
+          }
 
   # ── Docker: Build & Deploy ──────────────────────────────────────────────────
   docker-deploy:
@@ -75,13 +88,13 @@ jobs:
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     defaults:
       run:
-        shell: bash
+        shell: pwsh
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
       - name: Stop existing containers
-        run: docker compose down --remove-orphans || true
+        run: docker compose down --remove-orphans 2>$null; $true
 
       - name: Build and start containers
         run: docker compose up --build -d
@@ -91,21 +104,28 @@ jobs:
 
       - name: Wait for backend health check
         run: |
-          echo "Waiting for backend to be healthy..."
-          for i in $(seq 1 30); do
-            if curl -sf http://localhost:5000/api/health > /dev/null 2>&1; then
-              echo "Backend is healthy!"
-              exit 0
-            fi
-            echo "Attempt $i/30 – waiting 5s..."
-            sleep 5
-          done
-          echo "Backend failed to start"
+          Write-Host "Waiting for backend to be healthy..."
+          for ($i = 1; $i -le 30; $i++) {
+            try {
+              $response = Invoke-WebRequest -Uri http://localhost:5000/api/health -UseBasicParsing -ErrorAction Stop
+              if ($response.StatusCode -eq 200) {
+                Write-Host "Backend is healthy!"
+                exit 0
+              }
+            } catch {
+              Write-Host "Attempt $i/30 - waiting 5s..."
+              Start-Sleep -Seconds 5
+            }
+          }
+          Write-Host "Backend failed to start"
           docker compose logs
           exit 1
 
       - name: Verify frontend is reachable
-        run: curl -sf http://localhost:8080 > /dev/null && echo "Frontend is up!"
+        run: |
+          $response = Invoke-WebRequest -Uri http://localhost:8080 -UseBasicParsing
+          if ($response.StatusCode -eq 200) { Write-Host "Frontend is up!" }
+          else { throw "Frontend not reachable" }
 
       - name: Show running containers
         if: always()
