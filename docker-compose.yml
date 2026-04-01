@@ -1,0 +1,56 @@
+services:
+  # ── Backend (Node.js / Express / sql.js SQLite) ──────────────────────────────
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: taskflow-backend
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      PORT: 5000
+      # Override this with a long random string in production!
+      JWT_SECRET: ${JWT_SECRET:-change_me_in_production_super_secret_key}
+      JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-7d}
+      # Persist the SQLite database file in the named volume below
+      DB_PATH: /app/data/database.sqlite
+    ports:
+      - "${BACKEND_PORT:-5000}:5000"
+    volumes:
+      # Named volume keeps the SQLite file across container restarts / rebuilds
+      - sqlite_data:/app/data
+    networks:
+      - taskflow-net
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:5000/api/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+
+  # ── Frontend (React/Vite build → nginx) ──────────────────────────────────────
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: taskflow-frontend
+    restart: unless-stopped
+    ports:
+      # Expose the app on http://localhost:8080 (or change the host port as needed)
+      - "${FRONTEND_PORT:-8080}:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - taskflow-net
+
+# ── Named volumes ─────────────────────────────────────────────────────────────
+volumes:
+  sqlite_data:
+    name: taskflow-sqlite-data
+
+# ── Networks ──────────────────────────────────────────────────────────────────
+networks:
+  taskflow-net:
+    name: taskflow-network
+    driver: bridge
